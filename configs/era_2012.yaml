@@ -1,0 +1,59 @@
+# The real run: train on US equities <= 2012-06-30, evaluate on 2012-07-01 .. 2019-12-31.
+# Inherits everything in default.yaml; only the deltas below are overridden.
+# (The config loader in src/finpred/config/schema.py is responsible for the merge.)
+
+extends: default.yaml
+
+seed: 1234
+deterministic: false
+device: auto
+
+data:
+  source: both                 # yfinance + Stooq supplement (delisted tickers -> less survivorship bias)
+  tickers: __SP1500_PLUS_NASDAQ__   # sentinel: resolved by data/ingest.py to the full universe (~3000 tickers)
+  # PLUS explicit historical delistings for survivorship-bias mitigation:
+  extra_tickers: [LEH, BSC, WM, ENRNQ, GM, AIG, C, BAC]   # best-effort; ingest skips ones with no data
+  start_date: "1990-01-01"
+  train_end_date: "2012-06-30"
+  val_start_date: "2012-01-01"
+  eval_start_date: "2012-07-01"
+  eval_end_date: "2019-12-31"
+
+windows:
+  lengths: [252, 504, 1260, 2520]   # 1y, 2y, 5y, 10y
+  stride: 21
+  stratify_by: ticker
+
+model:
+  z_dim: 3
+  hidden_channels: 80
+  n_blocks: 6
+  kernel_size: 5
+  dilations: [1, 2, 4, 8, 16, 32]
+
+train:
+  steps: 80000
+  batch_size: 64               # @ T=252; loader/loop scales down + uses grad_accum for longer windows
+  grad_accum: 1                # auto-bumped for T>=1260 to keep VRAM < ~10 GB on the RTX 4070
+  n_critic: 5
+  lr: 1.0e-4
+  betas: [0.5, 0.9]
+  gp_lambda: 10.0
+  bf16: true
+  compile: true
+  ckpt_every: 5000
+  eval_every: 5000
+
+eval:
+  n_way: 5
+  n_episodes: 5000
+  stylized_facts:
+    acf_lags: [1, 5, 22]
+
+quiz:
+  n_way: 5
+  out_dir: reports/quiz/
+
+promotion:
+  min_n_way_acc: 0.45
+  min_ks_pvalue: 0.05

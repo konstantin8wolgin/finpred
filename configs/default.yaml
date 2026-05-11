@@ -1,0 +1,56 @@
+# Base config — small/fast, good for smoke runs and CPU tests.
+# `configs/era_2012.yaml` overrides this for the real run.
+
+seed: 0
+deterministic: false           # torch.use_deterministic_algorithms; flip on if you need exact repro
+device: auto                   # auto -> cuda if available else cpu
+
+data:
+  source: yfinance             # yfinance | stooq | both
+  tickers: [NVDA, AAPL, MSFT, SPY]   # tiny universe for smoke runs; era_2012 uses the full list
+  start_date: "1990-01-01"
+  train_end_date: "2012-06-30"       # inclusive; nothing after this enters training
+  val_start_date: "2012-01-01"       # training-time validation slice [val_start, train_end]
+  eval_start_date: "2012-07-01"      # held-out era starts here
+  eval_end_date: "2019-12-31"
+  cache_dir: data/
+  features: [logret_open, logret_high, logret_low, logret_close, logdiff_volume]
+
+windows:
+  lengths: [252]               # trading-day window lengths to sample from; era_2012 adds 504, 1260, 2520
+  stride: 21                   # overlap stride for rolling windows
+  stratify_by: ticker
+
+model:
+  z_dim: 3
+  hidden_channels: 32          # era_2012 uses 80
+  n_blocks: 4                  # era_2012 uses 6
+  kernel_size: 5
+  dilations: [1, 2, 4, 8]      # era_2012 uses [1,2,4,8,16,32]
+
+train:
+  steps: 2000                  # era_2012 uses 50000-100000
+  batch_size: 16               # era_2012 uses 64 @ T=252
+  grad_accum: 1
+  n_critic: 5
+  lr: 1.0e-4
+  betas: [0.5, 0.9]
+  gp_lambda: 10.0
+  bf16: true
+  compile: false               # era_2012 turns this on
+  ckpt_every: 500              # era_2012 uses 5000
+  eval_every: 500
+
+eval:
+  n_way: 5                     # 1 real + 4 fake
+  n_episodes: 1000             # number of N-way episodes to average over
+  stylized_facts:
+    acf_lags: [1, 5, 22]
+
+quiz:
+  n_way: 5
+  out_dir: reports/quiz/
+
+promotion:                     # gate for autonomous (ralph-loop) iteration in Phase C
+  min_n_way_acc: 0.45
+  min_ks_pvalue: 0.05
