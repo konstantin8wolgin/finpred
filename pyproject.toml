@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "torch>=2.3",          # GPU work is C++/CUDA under the hood; needs >=2.3 for torch.compile + BF16 on Ada (RTX 4070)
     "numpy>=1.26",
+    "scipy>=1.11",         # Statistical functions (KS test, kurtosis)
     "polars>=1.0",         # Rust-backed dataframes for the data pipeline
     "pyarrow>=16.0",       # Parquet cache
     "yfinance>=0.2.40",    # Yahoo Finance daily OHLCV ingestion
