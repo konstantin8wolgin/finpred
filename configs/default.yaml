@@ -24,9 +24,10 @@ windows:
 model:
   z_dim: 3
   hidden_channels: 32          # era_2012 uses 80
-  n_blocks: 4                  # era_2012 uses 6
+  n_blocks: 4                  # era_2012 uses 10
   kernel_size: 5
-  dilations: [1, 2, 4, 8]      # era_2012 uses [1,2,4,8,16,32]
+  # smoke config: RF=1+8*(1+2+4+8)=121 < T=252 intentionally — fast runs only, not full coverage
+  dilations: [1, 2, 4, 8]      # era_2012 uses [1,2,4,8,16,32,64,128,256,512]
 
 train:
   steps: 2000                  # era_2012 uses 50000-100000

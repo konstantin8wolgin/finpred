@@ -17,8 +17,17 @@ from __future__ import annotations
 
 import argparse
 
+from torch import nn
+from torch.utils.data import Dataset
 
-def n_way_accuracy(generator, discriminator, dataset, n_way: int, n_episodes: int) -> dict:
+
+def n_way_accuracy(
+    generator: nn.Module,
+    discriminator: nn.Module,
+    dataset: Dataset,
+    n_way: int,
+    n_episodes: int,
+) -> dict:
     """Return {'accuracy': float, 'ci_low': float, 'ci_high': float, 'n_way': int}. STUB."""
     raise NotImplementedError("eval.n_way.n_way_accuracy — implement in Phase B")
 

@@ -4,7 +4,10 @@ STUB (Phase B). Implement:
   - build G, D from config; Adam(betas=(0.5,0.9), lr); optional torch.compile,
   - per generator step: `n_critic` critic updates (real batch from data.windows + fake batch
     from G) with gradient penalty (lambda from config), then one generator update,
-  - BF16 autocast on CUDA; grad accumulation for long windows; keep peak VRAM < ~10 GB (4070),
+  - BF16 autocast on CUDA; grad accumulation scaled by window length to keep VRAM < ~10 GB (4070):
+      effective_grad_accum = max(cfg.train.grad_accum, T // 252)
+    so a T=252 batch runs at grad_accum=1 (batch_size=64) and T=2520 runs at grad_accum=10
+    (effective batch_size=64, per-step size=6 or 7). Log the resolved value to run.json.
   - seeding + determinism from config; log resolved config + seed + git SHA to
     reports/<run_id>/run.json,
   - TensorBoard scalars (losses, GP, grad norms) to reports/tb/<run_id>/,

@@ -43,21 +43,26 @@ al. 2017, "Improved Training of Wasserstein GANs").
 - **Generator G** — TCN with dilated causal convolutions.
   - Input: noise `(B, T, z_dim=3)`. Optional `cond` arg accepted but **ignored in v1**
     (reserved for v2 conditional model: sector / ticker-class / starting volatility).
-  - ~6 residual TCN blocks, kernel size 5, hidden channels 80, dilations `{1,2,4,8,16,32}`.
-  - ~2 M parameters.
+  - **10 residual TCN blocks**, kernel size 5, hidden channels 80,
+    dilations `{1,2,4,8,16,32,64,128,256,512}`.
+  - Receptive field: `1 + 2*(5-1)*(1+2+…+512) = 1 + 8*1023 = 8185` steps ≥ T_max=2520.
+  - ~3–4 M parameters.
   - **OHLC consistency contract** (document at top of `generator.py`): the output head
     parameterizes `high = max(open, close) + softplus(...)`, `low = min(open, close) -
     softplus(...)`, so every emitted bar satisfies `low ≤ min(open,close) ≤ max(open,close) ≤
     high`. Invalid candles are a classic financial-GAN pitfall; this makes them impossible by
-    construction.
-- **Discriminator D** — similar TCN, global average pool → linear → scalar critic score.
-  ~2 M params.
+    construction. See `generator.py` docstring for the precise 5-channel parameterization.
+- **Discriminator D** — same TCN depth (10 blocks, same dilations), global average pool →
+  linear → scalar critic score. ~3–4 M params.
 - **Optimizer**: Adam, `betas=(0.5, 0.9)`, `lr=1e-4`. `n_critic=5` critic steps per generator
   step. Gradient penalty coefficient `λ=10`.
 - **Precision**: BF16 autocast (RTX 4070 / Ada supports it natively). `torch.compile` on the
   generator + discriminator.
-- **Batch size**: 64 for `T=252`; scale down with gradient accumulation for longer windows
-  (e.g. 8 for `T=2520`). See `configs/era_2012.yaml`.
+- **Batch size and gradient accumulation**: nominal `batch_size=64` at `T=252`. For longer
+  windows the training loop auto-scales: `effective_grad_accum = max(cfg.train.grad_accum, T//252)`
+  so that effective tokens per update step stays constant and VRAM stays under ~10 GB. Example:
+  T=2520 → grad_accum=10, per-step batch≈6. The resolved value is logged to `run.json`.
+  See `configs/era_2012.yaml` for the per-length breakdown.
 - **Schedule**: 50k–100k generator steps; checkpoint + run eval every 5k steps.
 
 ## Hardware target
@@ -204,3 +209,8 @@ little vs. TDD inside the dev agent.
 2020s / pre-2012 eras (phase 2); intraday data; alternative generators (TimeGAN, diffusion) —
 leave the `generator.py` interface clean for a swap; live trading or any forecasting beyond the
 quiz; a web UI for the quiz (CLI only).
+
+## Rules
+
+- No emojis anywhere (code, docs, commit messages).
+- Prefer `uv run` / `uv` over bare `python3`.

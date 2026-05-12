@@ -12,7 +12,7 @@ data:
   source: both                 # yfinance + Stooq supplement (delisted tickers -> less survivorship bias)
   tickers: __SP1500_PLUS_NASDAQ__   # sentinel: resolved by data/ingest.py to the full universe (~3000 tickers)
   # PLUS explicit historical delistings for survivorship-bias mitigation:
-  extra_tickers: [LEH, BSC, WM, ENRNQ, GM, AIG, C, BAC]   # best-effort; ingest skips ones with no data
+  extra_tickers: [LEH, BSC, WAMUQ, ENRNQ, GM, AIG, C, BAC]   # best-effort; ingest skips ones with no data
   start_date: "1990-01-01"
   train_end_date: "2012-06-30"
   val_start_date: "2012-01-01"
@@ -27,14 +27,15 @@ windows:
 model:
   z_dim: 3
   hidden_channels: 80
-  n_blocks: 6
+  n_blocks: 10
   kernel_size: 5
-  dilations: [1, 2, 4, 8, 16, 32]
+  # RF = 1 + 2*(kernel_size-1)*sum(dilations) = 1 + 8*1023 = 8185 >= T_max=2520
+  dilations: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 
 train:
   steps: 80000
   batch_size: 64               # @ T=252; loader/loop scales down + uses grad_accum for longer windows
-  grad_accum: 1                # auto-bumped for T>=1260 to keep VRAM < ~10 GB on the RTX 4070
+  grad_accum: 1                # training loop sets effective = max(1, T//252) per window length; e.g. T=2520 → grad_accum=10
   n_critic: 5
   lr: 1.0e-4
   betas: [0.5, 0.9]

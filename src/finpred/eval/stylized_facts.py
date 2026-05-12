@@ -15,5 +15,5 @@ import numpy as np
 
 
 def stylized_facts(real_returns: np.ndarray, gen_returns: np.ndarray, acf_lags: list[int]) -> dict:
-    """Return {'gen_kurtosis': ..., 'acf_abs_lag1': ..., ..., 'ks_stat': ..., 'ks_pvalue': ...}. STUB."""
+    """Return {'gen_kurtosis': ..., 'acf_abs_lag1': ..., 'ks_stat': ..., 'ks_pvalue': ...}. STUB."""
     raise NotImplementedError("eval.stylized_facts.stylized_facts — implement in Phase B")
