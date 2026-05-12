@@ -139,7 +139,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out["logret_high"] = np.log(np.clip(high_margin, 0.0, None) + 1e-8)
     out["logret_low"] = np.log(np.clip(low_margin, 0.0, None) + 1e-8)
     out["logret_close"] = np.log(df["Close"] / prev_close)
-    out["logdiff_volume"] = np.log(df["Volume"]) - np.log(prev_volume)
+    vol = np.clip(df["Volume"], 1.0, None)
+    prev_vol = np.clip(prev_volume, 1.0, None)
+    out["logdiff_volume"] = np.log(vol) - np.log(prev_vol)
 
     return out
 
@@ -289,8 +291,9 @@ def ingest_ticker(
     stats = compute_stats(train)
 
     # Write feature parquet (full history, not standardized)
+    feats.index.name = "date"
     pl_df = (
-        pl.from_pandas(feats.reset_index().rename(columns={"index": "date"}))
+        pl.from_pandas(feats.reset_index())
         .with_columns(pl.col("date").cast(pl.Date))
     )
     pl_df.write_parquet(cache_dir / f"{ticker}.parquet")

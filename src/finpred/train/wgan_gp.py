@@ -424,6 +424,11 @@ def train(cfg: Config) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="Train the TCN-GAN (WGAN-GP).")
     parser.add_argument("--config", required=True, help="Path to YAML config file.")
     args = parser.parse_args()

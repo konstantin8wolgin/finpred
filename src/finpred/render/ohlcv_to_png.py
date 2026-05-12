@@ -63,9 +63,9 @@ def reconstruct_ohlcv(
     prev_close[1:] = close[:-1]
     open_prices = prev_close * np.exp(raw[:, 0])
 
-    # High / Low using the margin columns (abs() for safety in case of floating artifacts)
-    high_margin = np.abs(raw[:, 1])
-    low_margin = np.abs(raw[:, 2])
+    # High / Low: col 1/2 are log(margin + 1e-8) from ingest; invert with exp.
+    high_margin = np.exp(raw[:, 1])
+    low_margin = np.exp(raw[:, 2])
     high = np.maximum(open_prices, close) + high_margin
     low = np.minimum(open_prices, close) - low_margin
 
