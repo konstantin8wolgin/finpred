@@ -35,7 +35,6 @@ Implementation notes:
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 import pytest
 
 from finpred.models.generator import Generator
@@ -58,22 +57,28 @@ def _make_gen() -> Generator:
 def _reconstruct_prices(out: torch.Tensor):
     """Return (open, close, high, low) pseudo-prices given the 5-channel generator output.
 
+    Format: [logret_open, logret_high, logret_low, logret_close, logdiff_volume]
     Reconstruction is purely for contract verification; absolute price levels are arbitrary
-    since we start from cumsum(0) = 1.0 for convenience.
+    since we start from prev_close = 1.0 at t=0.
     """
     # out: (B, T, 5)
-    dlog_close  = out[..., 0]
-    dlog_volume = out[..., 1]  # noqa: F841 — not used in price reconstruction
-    open_offset = out[..., 2]
-    hi_raw      = out[..., 3]
-    lo_raw      = out[..., 4]
+    logret_open  = out[..., 0]  # log(Open_t / Close_{t-1})
+    logret_high  = out[..., 1]  # log(high_margin + 1e-8)
+    logret_low   = out[..., 2]  # log(low_margin + 1e-8)
+    logret_close = out[..., 3]  # log(Close_t / Close_{t-1})
 
-    # Accumulate close prices from log-returns; start at 1.0.
-    close = torch.exp(torch.cumsum(dlog_close, dim=-1))
-    open_ = close * torch.exp(open_offset)
+    # Cumulative log-close (prev_close at t=0 is 1.0, so log_prev_close[0] = 0).
+    log_close = torch.cumsum(logret_close, dim=-1)
+    log_prev_close = torch.cat(
+        [torch.zeros_like(log_close[..., :1]), log_close[..., :-1]], dim=-1
+    )
 
-    high_margin = F.softplus(hi_raw)
-    low_margin  = F.softplus(lo_raw)
+    close = torch.exp(log_close)
+    open_ = torch.exp(log_prev_close + logret_open)
+
+    # Margins: exp(logret_high) - 1e-8 = softplus(raw_hi) > 0 by construction.
+    high_margin = torch.exp(logret_high) - 1e-8
+    low_margin  = torch.exp(logret_low)  - 1e-8
 
     high = torch.maximum(open_, close) + high_margin
     low  = torch.minimum(open_, close) - low_margin
@@ -118,10 +123,9 @@ def test_softplus_margin_positive():
     with torch.no_grad():
         z = torch.randn(4, 64, 3)
         out = gen(z)
-        hi_raw = out[..., 3]
-        lo_raw = out[..., 4]
-        high_margin = F.softplus(hi_raw)
-        low_margin  = F.softplus(lo_raw)
+        # ch1 = log(softplus(raw_hi) + 1e-8), ch2 = log(softplus(raw_lo) + 1e-8)
+        high_margin = torch.exp(out[..., 1]) - 1e-8  # = softplus(raw_hi) > 0
+        low_margin  = torch.exp(out[..., 2]) - 1e-8  # = softplus(raw_lo) > 0
         assert (high_margin > 0).all(), "high_margin contains non-positive values"
         assert (low_margin > 0).all(), "low_margin contains non-positive values"
 

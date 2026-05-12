@@ -2,23 +2,29 @@
 
 ARCHITECTURE (pinned — see CLAUDE.md): QuantGAN-style dilated-causal TCN.
   Input  noise z: (B, T, z_dim).  Optional `cond`: accepted but IGNORED in v1.
-  Output: (B, T, 5) = log-returns of Open/High/Low/Close + log-diff Volume.
+  Output: (B, T, 5) — same 5-channel format as ingest.py / WindowDataset:
+    channel 0  logret_open   = log(Open_t  / Close_{t-1})
+    channel 1  logret_high   = log(high_margin + 1e-8)  where high_margin = High - max(Open, Close)
+    channel 2  logret_low    = log(low_margin  + 1e-8)  where low_margin  = min(Open, Close) - Low
+    channel 3  logret_close  = log(Close_t / Close_{t-1})
+    channel 4  logdiff_volume = log(Volume_t) - log(Volume_{t-1})
 
 OHLC CONSISTENCY CONTRACT (must hold for EVERY emitted bar, by construction):
     low <= min(open, close) <= max(open, close) <= high
-The output head enforces this via a 5-channel projection from the TCN backbone:
-  channel 0  dlog_close   — log-return of close for this bar
-  channel 1  dlog_volume  — log-difference of volume for this bar
-  channel 2  open_offset  — log(open_t / close_t): same-bar log spread; positive ↔ open > close
-  channel 3  hi_raw       — unconstrained; softplus gives the high margin above max(open, close)
-  channel 4  lo_raw       — unconstrained; softplus gives the low margin below min(open, close)
+The output head enforces this by parameterizing channels 1 and 2 as
+    log(softplus(raw) + 1e-8)
+so that high_margin = softplus(raw_hi) > 0 and low_margin = softplus(raw_lo) > 0 always,
+making high = max(open, close) + high_margin >= max(open, close) and
+      low  = min(open, close) - low_margin  <= min(open, close).
+Invalid candles are structurally impossible regardless of network weights.
 
-Reconstruction in price space (per bar):
-  close_price = prev_close * exp(dlog_close)
-  open_price  = close_price * exp(open_offset)
-  high_price  = max(open_price, close_price) + softplus(hi_raw)   # always >= both
-  low_price   = min(open_price, close_price) - softplus(lo_raw)   # always <= both
-Never emit O/H/L as free values. A test asserts no invalid candle is ever produced.
+Price reconstruction (render module only — the discriminator sees log-returns, not prices):
+  close_t  = close_{t-1} * exp(logret_close)
+  open_t   = close_{t-1} * exp(logret_open)
+  high_margin = exp(logret_high) - 1e-8          # = softplus(raw_hi) > 0
+  high_t   = max(open_t, close_t) + high_margin
+  low_margin  = exp(logret_low) - 1e-8           # = softplus(raw_lo) > 0
+  low_t    = min(open_t, close_t) - low_margin
 """
 
 from __future__ import annotations
@@ -73,13 +79,16 @@ class Generator(nn.Module):
         # (B, 5, T) raw logits
         x = self.output_proj(x)
 
-        # Apply softplus to the high and low margin channels so they are strictly positive.
-        # Channels 0, 1, 2 are passed through unchanged (log-return / log-spread values).
+        # Transform channels 1 and 2 (high/low margins) to match ingest.py format:
+        # logret_high = log(softplus(raw_hi) + 1e-8), logret_low = log(softplus(raw_lo) + 1e-8).
+        # softplus ensures margin > 0; taking log matches log(clip(margin,0)+1e-8) in ingest.py.
         x = torch.cat(
             [
-                x[:, :3, :],
-                F.softplus(x[:, 3:4, :]),
-                F.softplus(x[:, 4:5, :]),
+                x[:, 0:1, :],
+                torch.log(F.softplus(x[:, 1:2, :]) + 1e-8),
+                torch.log(F.softplus(x[:, 2:3, :]) + 1e-8),
+                x[:, 3:4, :],
+                x[:, 4:5, :],
             ],
             dim=1,
         )
