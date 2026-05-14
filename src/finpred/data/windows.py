@@ -18,11 +18,8 @@ ticker dominates a training epoch.
 """
 from __future__ import annotations
 
-import itertools
 from datetime import date
 from pathlib import Path
-from typing import Iterator
-
 import polars as pl
 import torch
 
@@ -99,15 +96,18 @@ def _load_ticker_df(cache_dir: Path, ticker: str) -> pl.DataFrame | None:
     return pl.read_parquet(parquet_path)
 
 
-class WindowDataset(torch.utils.data.IterableDataset):
-    """Iterable dataset of rolling OHLCV windows, with strict era-cutoff enforcement.
+class WindowDataset(torch.utils.data.Dataset):
+    """Map-style dataset of rolling OHLCV windows, with strict era-cutoff enforcement.
+
+    Stores per-ticker numpy arrays at init and an index of (array, start_row) pairs so
+    that __getitem__ materialises tensors lazily — memory is O(rows) not O(windows).
 
     Args:
         cfg:          Config namespace/object with cfg.data.* and cfg.windows.* attributes.
         split:        One of "train", "val", "eval".
         length:       Window length in trading days.  If None, uses cfg.windows.lengths[0].
-        return_dates: If True, each iteration yields (tensor, list[date]) instead of tensor.
-                      Intended for tests only.
+        return_dates: If True, each item is (tensor, list[date]) instead of tensor.
+                      Intended for leakage tests only.
     """
 
     def __init__(
@@ -136,41 +136,36 @@ class WindowDataset(torch.utils.data.IterableDataset):
             )
         self.tickers: list[str] = list(tickers)
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _windows_for_ticker(
-        self, ticker: str
-    ) -> list[tuple[torch.Tensor, list[date]] | torch.Tensor]:
-        df = _load_ticker_df(self.cache_dir, ticker)
-        if df is None:
-            return []
-        sliced = _slice_split(df, self.split, self.cfg)
-        return _rolling_windows(sliced, self.length, self.stride, self.return_dates)
-
-    # ------------------------------------------------------------------
-    # IterableDataset protocol
-    # ------------------------------------------------------------------
-
-    def __iter__(self) -> Iterator[torch.Tensor | tuple[torch.Tensor, list[date]]]:
-        """Yield windows round-robin across tickers (stratified by ticker)."""
-        # Build per-ticker window lists
-        ticker_windows: list[list] = []
+        # Build index: list of (feature_array, date_list_or_None, window_start_row).
+        # feature_array is shared across all windows for the same ticker to save memory.
+        self._index: list[tuple] = []
         for ticker in self.tickers:
-            windows = self._windows_for_ticker(ticker)
-            if windows:
-                ticker_windows.append(windows)
+            df = _load_ticker_df(self.cache_dir, ticker)
+            if df is None:
+                continue
+            sliced = _slice_split(df, self.split, self.cfg)
+            n = len(sliced)
+            if n < self.length:
+                continue
+            arr = sliced.select(FEATURE_COLS).to_numpy()
+            dates = sliced["date"].to_list() if return_dates else None
+            for start in range(0, n - self.length + 1, self.stride):
+                self._index.append((arr, dates, start))
 
-        if not ticker_windows:
-            return
+    # ------------------------------------------------------------------
+    # Dataset protocol
+    # ------------------------------------------------------------------
 
-        # Round-robin interleaving so no single ticker floods the epoch.
-        for window in itertools.chain.from_iterable(
-            itertools.zip_longest(*ticker_windows)
-        ):
-            if window is not None:
-                yield window
+    def __len__(self) -> int:
+        return len(self._index)
+
+    def __getitem__(self, idx: int) -> torch.Tensor | tuple[torch.Tensor, list[date]]:
+        arr, dates, start = self._index[idx]
+        end = start + self.length
+        tensor = torch.tensor(arr[start:end], dtype=torch.float32)
+        if self.return_dates:
+            return tensor, dates[start:end]
+        return tensor
 
 
 # ---------------------------------------------------------------------------

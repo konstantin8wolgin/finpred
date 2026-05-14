@@ -90,6 +90,10 @@ make eval                    # writes reports/<run_id>/eval.json (N-way acc + st
 make quiz                    # renders reports/quiz/*.png — take the quiz yourself
 make render                  # real-vs-generated sample PNGs across checkpoints
 make test lint typecheck
+
+# Run a single test file or test function:
+uv run pytest tests/test_wgan_gp.py -v
+uv run pytest tests/test_windows_leakage.py::test_no_train_leakage -v
 ```
 
 ## Evaluation — what "good" means
@@ -148,19 +152,19 @@ finpred/
     default.yaml           # base config (small/fast — good for smoke runs)
     era_2012.yaml          # the real run: train <=2012-06-30, eval 2012-07..2019
   src/finpred/
-    config/    schema.py   # pydantic config models + YAML loader  [STUB]
-    data/      ingest.py   # yfinance (+Stooq) -> parquet cache     [STUB]
-               windows.py  # overlapping rolling-window sampler, era-cutoff enforced [STUB]
-    models/    tcn_blocks.py  # dilated causal conv residual block (shared by G & D) [STUB]
-               generator.py   # TCN generator, OHLC-consistent head  [STUB]
-               discriminator.py  # TCN critic                        [STUB]
-    train/     wgan_gp.py  # training loop: WGAN-GP, BF16, checkpoints, eval hook [STUB]
-    eval/      n_way.py    # N-way pick-the-real harness + CLI        [STUB]
-               stylized_facts.py  # kurtosis / ACF|r| / leverage / KS [STUB]
-    render/    ohlcv_to_png.py  # mplfinance candlestick renderer     [STUB]
-    quiz/      cli.py      # typer CLI: pose the N-way quiz to model and/or human [STUB]
+    config/    schema.py   # pydantic config models + YAML loader; `extends:` deep-merge
+    data/      ingest.py   # yfinance (+Stooq) -> parquet cache; standardizes per ticker
+               windows.py  # overlapping rolling-window sampler, era-cutoff enforced
+    models/    tcn_blocks.py  # dilated causal conv residual block (shared by G & D)
+               generator.py   # TCN generator, OHLC-consistent head
+               discriminator.py  # TCN critic: global avg pool -> scalar
+    train/     wgan_gp.py  # training loop: WGAN-GP, BF16, checkpoints, eval hook
+    eval/      n_way.py    # N-way pick-the-real harness + CLI
+               stylized_facts.py  # kurtosis / ACF|r| / leverage / KS
+    render/    ohlcv_to_png.py  # mplfinance candlestick renderer
+    quiz/      cli.py      # typer CLI: pose the N-way quiz to model and/or human
   scripts/
-    render_samples.sh      # real-vs-generated PNGs across checkpoints [STUB]
+    render_samples.sh      # real-vs-generated PNGs across checkpoints
   tests/                   # pytest, TDD — paired with each module above
   data/  checkpoints/  reports/   # gitignored, regenerated
 ```
@@ -178,17 +182,15 @@ little vs. TDD inside the dev agent.
 
 - **Phase A.0 — DONE**: `git init`, this `CLAUDE.md`, `pyproject.toml`, configs, package
   skeleton with stubs, first commit.
-- **Phase A.1 — parallel subagents (3–4)**: implement the *independent* leaves with TDD —
-  `data/` (ingest + windows), `render/`, `quiz/` CLI, `config/`. Disjoint subtrees; they only
-  *read* `pyproject.toml`. Good fit for parallel `Agent(subagent_type=...)` dispatch.
-- **Phase B — single long-context dev agent**: build `models/` + `train/wgan_gp.py` +
-  `eval/n_way.py` + `eval/stylized_facts.py` together, TDD. These are tightly coupled — do NOT
-  split across parallel agents.
+- **Phase A.1 — DONE**: implemented the independent leaves with TDD — `data/` (ingest +
+  windows), `render/`, `quiz/` CLI, `config/`.
+- **Phase B — DONE**: built `models/` + `train/wgan_gp.py` + `eval/n_way.py` +
+  `eval/stylized_facts.py` together, TDD.
 - **Phase-boundary review**: after A.1 and after B, dispatch a *fresh-context* code-reviewer
   subagent over the diff (no implementation context → no anchoring). Human signs off.
-- **Phase C — iteration**: human-in-loop. Look at loss curves + sample PNGs + N-way accuracy
-  each run. Only wrap it in an autonomous loop (`ralph-loop`) once the promotion criterion
-  above is wired and trustworthy.
+- **Phase C — CURRENT**: human-in-loop iteration. Look at loss curves + sample PNGs + N-way
+  accuracy each run. Only wrap it in an autonomous loop (`ralph-loop`) once the promotion
+  criterion above is wired and trustworthy.
 - **No separate tester agent.** Whoever writes code writes its tests.
 
 ## Definition of done (v1)

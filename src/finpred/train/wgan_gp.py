@@ -22,6 +22,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from finpred.config.schema import Config, load_config
+from finpred.data.ingest import resolve_tickers
 from finpred.data.windows import WindowDataset
 from finpred.eval.n_way import n_way_accuracy
 from finpred.eval.stylized_facts import stylized_facts
@@ -135,6 +136,7 @@ def _run_eval(
     G: nn.Module,
     D: nn.Module,
     val_dataset: WindowDataset,
+    train_dataset: WindowDataset,
     cfg: Config,
     step: int,
     writer,
@@ -145,11 +147,21 @@ def _run_eval(
     z_dim = cfg.model.z_dim
     T = cfg.windows.lengths[0]
 
-    # N-way accuracy on the validation split.
+    # The val split is 6 months, shorter than the minimum window (252 days).
+    # Fall back to train split for n_way so training-time eval is never empty.
+    nway_dataset = val_dataset if len(val_dataset) > 0 else train_dataset
+    if len(val_dataset) == 0:
+        logger.warning(
+            "val_dataset is empty (val split too short for T=%d windows); "
+            "using train split for training-time n_way accuracy",
+            T,
+        )
+
+    # N-way accuracy.
     nway_result = n_way_accuracy(
         G,
         D,
-        val_dataset,
+        nway_dataset,
         n_way=cfg.eval.n_way,
         n_episodes=cfg.eval.n_episodes,
     )
@@ -273,10 +285,10 @@ def train(cfg: Config) -> None:
         dilations=cfg.model.dilations,
     ).to(device)
 
-    # Optional torch.compile (only when CUDA is actually available)
+    # Only compile G — D is used in gradient_penalty with create_graph=True (double backward),
+    # which torch.compile/aot_autograd does not support.
     if cfg.train.compile and torch.cuda.is_available():
         G = torch.compile(G)  # type: ignore[assignment]
-        D = torch.compile(D)  # type: ignore[assignment]
 
     # Optimizers
     betas = tuple(cfg.train.betas)
@@ -286,6 +298,10 @@ def train(cfg: Config) -> None:
     # TensorBoard
     writer = _make_writer(tb_dir)
 
+    # Resolve ticker sentinel before building datasets (era_2012 uses __SP1500_PLUS_NASDAQ__).
+    resolved = resolve_tickers(cfg.data.tickers, extra_tickers=list(cfg.data.extra_tickers))
+    cfg.data.tickers = resolved
+
     # Datasets and loaders
     train_dataset = WindowDataset(cfg, split="train", length=T)
     val_dataset = WindowDataset(cfg, split="val", length=T)
@@ -293,6 +309,7 @@ def train(cfg: Config) -> None:
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.train.batch_size,
+        shuffle=True,
         drop_last=True,
         num_workers=0,
     )
@@ -378,7 +395,7 @@ def train(cfg: Config) -> None:
         _write_scalar(writer, "loss/generator", gen_loss_accum, step)
         _write_scalar(writer, "grad_penalty", avg_gp, step)
 
-        if step % max(1, cfg.train.steps // 10) == 0:
+        if step % 500 == 0 or step == 1:
             logger.info(
                 "step %d/%d  critic=%.4f  gen=%.4f  gp=%.4f",
                 step,
@@ -409,7 +426,7 @@ def train(cfg: Config) -> None:
         # Eval hook
         # ------------------------------------------------------------------
         if step % cfg.train.eval_every == 0:
-            _run_eval(G, D, val_dataset, cfg, step, writer, run_json_path)
+            _run_eval(G, D, val_dataset, train_dataset, cfg, step, writer, run_json_path)
             G.train()
             D.train()
 
