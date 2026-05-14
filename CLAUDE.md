@@ -57,7 +57,8 @@ al. 2017, "Improved Training of Wasserstein GANs").
 - **Optimizer**: Adam, `betas=(0.5, 0.9)`, `lr=1e-4`. `n_critic=5` critic steps per generator
   step. Gradient penalty coefficient `λ=10`.
 - **Precision**: BF16 autocast (RTX 4070 / Ada supports it natively). `torch.compile` on the
-  generator + discriminator.
+  generator only — the discriminator is used with `create_graph=True` (double-backward for the
+  gradient penalty), which torch.compile/aot_autograd does not support.
 - **Batch size and gradient accumulation**: nominal `batch_size=64` at `T=252`. For longer
   windows the training loop auto-scales: `effective_grad_accum = max(cfg.train.grad_accum, T//252)`
   so that effective tokens per update step stays constant and VRAM stays under ~10 GB. Example:
@@ -124,11 +125,19 @@ slice. (Tune these once real numbers exist.)
 - **Survivorship bias.** yfinance over-represents currently-listed tickers. v1 mitigation:
   explicitly add known historical delistings (Lehman, Bear Stearns, WaMu, Enron, ...) via a
   Stooq supplemental pull for the *training* set. Fuller delisting coverage is deferred.
+- **Discriminator dominates early**: N-way accuracy near 1.0 in the first few hundred steps is
+  normal — the untrained generator produces trivially distinguishable noise. It should trend down
+  into 0.50–0.85 by step 2k–5k (smoke config). A plateau at exactly 1.0 beyond step 5k is the
+  real mode-collapse warning.
 - **Mode collapse signs**: generated stylized facts collapse to a narrow band, discriminator
-  loss → 0, N-way accuracy → 1.0. If you see this, lower `n_critic`, add noise to D inputs, or
-  reduce G capacity.
+  loss → 0, N-way accuracy → 1.0 (sustained). If you see this, lower `n_critic`, add noise to D
+  inputs, or reduce G capacity.
 - **Invalid candles**: must be impossible by construction (see OHLC contract above). If a test
   ever sees `high < close`, the generator head is wrong.
+- **Val split is shorter than T=252**: the 6-month val window (2012-01-01..2012-06-30 ≈ 125
+  trading days) produces zero valid T=252 windows. The training loop falls back to `train_dataset`
+  for training-time N-way accuracy in this case (logged as a warning). This is expected; the
+  training-time metric is a proxy only.
 - **Era leakage**: the single most important correctness property. `windows.py` tests assert no
   date > 2012-06-30 ever enters a training batch.
 - **`torch.use_deterministic_algorithms(True)`** may error on some ops — wrap in a config flag
@@ -164,7 +173,7 @@ finpred/
     render/    ohlcv_to_png.py  # mplfinance candlestick renderer
     quiz/      cli.py      # typer CLI: pose the N-way quiz to model and/or human
   scripts/
-    render_samples.sh      # real-vs-generated PNGs across checkpoints
+    render_samples.py      # real-vs-generated PNGs across checkpoints (replaces .sh stub)
   tests/                   # pytest, TDD — paired with each module above
   data/  checkpoints/  reports/   # gitignored, regenerated
 ```
@@ -188,9 +197,15 @@ little vs. TDD inside the dev agent.
   `eval/stylized_facts.py` together, TDD.
 - **Phase-boundary review**: after A.1 and after B, dispatch a *fresh-context* code-reviewer
   subagent over the diff (no implementation context → no anchoring). Human signs off.
-- **Phase C — CURRENT**: human-in-loop iteration. Look at loss curves + sample PNGs + N-way
-  accuracy each run. Only wrap it in an autonomous loop (`ralph-loop`) once the promotion
-  criterion above is wired and trustworthy.
+- **Phase C — CURRENT**: human-in-loop iteration.
+  1. `make train CONFIG=configs/default.yaml` for fast smoke (2k steps, ~minutes).
+  2. Watch TensorBoard: `uv run tensorboard --logdir reports/tb/`
+  3. After training: `make render CONFIG=configs/default.yaml` — writes PNGs to
+     `reports/<run_id>/samples/<step>/fake_*.png` and `real_*.png`.
+  4. Check `reports/<run_id>/run.json` for `eval_step_*` N-way accuracy trend.
+  5. Iterate on hyperparams if needed; then graduate to `make train` with `era_2012.yaml`.
+  Only wrap it in an autonomous loop (`ralph-loop`) once the promotion criterion is wired
+  and trustworthy.
 - **No separate tester agent.** Whoever writes code writes its tests.
 
 ## Definition of done (v1)

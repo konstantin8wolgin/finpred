@@ -33,7 +33,7 @@ quiz:
 	uv run python -m finpred.quiz.cli --config $(CONFIG)
 
 render:
-	uv run bash scripts/render_samples.sh
+	uv run python scripts/render_samples.py --config $(CONFIG)
 
 test:
 	uv run pytest
