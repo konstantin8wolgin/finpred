@@ -75,6 +75,7 @@ class TrainConfig(BaseModel):
     gp_lambda: float = 10.0
     bf16: bool = True
     compile: bool = False
+    num_workers: int = 4
     ckpt_every: int = 500
     eval_every: int = 500
 

@@ -42,6 +42,7 @@ train:
   gp_lambda: 10.0
   bf16: true
   compile: true
+  num_workers: 4
   ckpt_every: 5000
   eval_every: 5000
 

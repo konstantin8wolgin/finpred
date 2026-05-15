@@ -31,14 +31,15 @@ model:
 
 train:
   steps: 2000                  # era_2012 uses 50000-100000
-  batch_size: 16               # era_2012 uses 64 @ T=252
+  batch_size: 64
   grad_accum: 1
   n_critic: 5
   lr: 1.0e-4
   betas: [0.5, 0.9]
   gp_lambda: 10.0
   bf16: true
-  compile: false               # era_2012 turns this on
+  compile: true
+  num_workers: 4
   ckpt_every: 500              # era_2012 uses 5000
   eval_every: 500
 

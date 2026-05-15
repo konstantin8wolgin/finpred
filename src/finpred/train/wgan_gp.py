@@ -311,7 +311,9 @@ def train(cfg: Config) -> None:
         batch_size=cfg.train.batch_size,
         shuffle=True,
         drop_last=True,
-        num_workers=0,
+        num_workers=cfg.train.num_workers,
+        pin_memory=(device == "cuda"),
+        persistent_workers=(cfg.train.num_workers > 0),
     )
     loader_iter = _infinite_loader(train_loader)
 
