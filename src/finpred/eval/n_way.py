@@ -92,12 +92,106 @@ def n_way_accuracy(
     }
 
 
+def _latest_checkpoint(ckpt_root: "Path") -> "Path":
+    from pathlib import Path
+    import re
+    best_dir = max(
+        (d for d in Path(ckpt_root).iterdir() if d.is_dir()),
+        key=lambda d: len(list(d.glob("*.pt"))),
+        default=None,
+    )
+    if best_dir is None:
+        raise FileNotFoundError(f"No checkpoint directories found under {ckpt_root}")
+    pts = sorted(best_dir.glob("*.pt"), key=lambda p: int(re.search(r"\d+", p.stem).group()))
+    if not pts:
+        raise FileNotFoundError(f"No .pt files in {best_dir}")
+    return pts[-1]
+
+
+def _load_models(ckpt_path: "Path", cfg):
+    import re
+    import torch
+    from finpred.models.generator import Generator
+    from finpred.models.discriminator import Discriminator
+
+    device = cfg.device
+    G = Generator(
+        z_dim=cfg.model.z_dim,
+        hidden_channels=cfg.model.hidden_channels,
+        n_blocks=cfg.model.n_blocks,
+        kernel_size=cfg.model.kernel_size,
+        dilations=cfg.model.dilations,
+    ).to(device)
+    D = Discriminator(
+        hidden_channels=cfg.model.hidden_channels,
+        n_blocks=cfg.model.n_blocks,
+        kernel_size=cfg.model.kernel_size,
+        dilations=cfg.model.dilations,
+    ).to(device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+    for model, key in [(G, "G"), (D, "D")]:
+        state = ckpt[key]
+        if any(k.startswith("_orig_mod.") for k in state):
+            state = {k.replace("_orig_mod.", "", 1): v for k, v in state.items()}
+        model.load_state_dict(state)
+    return G, D
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="N-way pick-the-real evaluation.")
+    import json
+    import logging
+    from pathlib import Path
+    from finpred.config.schema import load_config
+    from finpred.data.ingest import resolve_tickers
+    from finpred.data.windows import WindowDataset
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logger = logging.getLogger(__name__)
+
+    parser = argparse.ArgumentParser(description="N-way pick-the-real evaluation on held-out era.")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--checkpoint", default=None, help="path to a .pt checkpoint")
-    parser.parse_args()
-    raise NotImplementedError("eval.n_way.main — implement in Phase B")
+    parser.add_argument("--checkpoint", default=None, help="path to a .pt checkpoint; default: latest")
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    resolved = resolve_tickers(cfg.data.tickers, extra_tickers=list(cfg.data.extra_tickers))
+    cfg.data.tickers = resolved
+
+    ckpt_path = Path(args.checkpoint) if args.checkpoint else _latest_checkpoint(Path("checkpoints"))
+    run_id = ckpt_path.parent.name
+    logger.info("Evaluating checkpoint: %s", ckpt_path)
+
+    G, D = _load_models(ckpt_path, cfg)
+
+    T = cfg.windows.lengths[0]
+    eval_dataset = WindowDataset(cfg, split="eval", length=T)
+    if len(eval_dataset) == 0:
+        logger.error("eval_dataset is empty — no held-out data found for split='eval'")
+        raise SystemExit(1)
+    logger.info("Eval dataset: %d windows (T=%d)", len(eval_dataset), T)
+
+    result = n_way_accuracy(
+        G, D, eval_dataset,
+        n_way=cfg.eval.n_way,
+        n_episodes=cfg.eval.n_episodes,
+    )
+
+    logger.info(
+        "%d-way accuracy: %.3f  (95%% CI: %.3f – %.3f)",
+        result["n_way"], result["accuracy"], result["ci_low"], result["ci_high"],
+    )
+
+    report_dir = Path(f"reports/{run_id}")
+    report_dir.mkdir(parents=True, exist_ok=True)
+    eval_path = report_dir / "eval.json"
+    existing = json.loads(eval_path.read_text()) if eval_path.exists() else {}
+    existing[f"held_out_{ckpt_path.stem}"] = {
+        "checkpoint": str(ckpt_path),
+        "split": "eval",
+        **result,
+    }
+    eval_path.write_text(json.dumps(existing, indent=2))
+    logger.info("Results written to %s", eval_path)
 
 
 if __name__ == "__main__":
