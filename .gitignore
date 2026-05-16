@@ -19,6 +19,13 @@ dist/
 .mypy_cache/
 .ipynb_checkpoints/
 
+# Local agent/session instructions
+CLAUDE.md
+claude.md
+claude.nd
+AGENTS.md
+logs/
+
 # OS / editor
 .DS_Store
 *.swp
